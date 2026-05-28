@@ -197,20 +197,25 @@ jobs:
 
       - name: Build Standard iOS App
         run: |
-          cd ios
-          # Disable codesign in Xcode completely
-          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' Runner.xcodeproj/project.pbxproj || true
-          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' Runner.xcodeproj/project.pbxproj || true
+          # Vô hiệu hóa Code Signing trong project Xcode để tránh lỗi Build trên Github Actions
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' ios/Runner.xcodeproj/project.pbxproj || true
+          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' ios/Runner.xcodeproj/project.pbxproj || true
           
-          flutter build ios --release --no-codesign || true
-          
-          # Force build with Xcode directly to get the .app output without code signing
-          xcodebuild build -workspace Runner.xcworkspace -scheme Runner -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" EXPANDED_CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE_SPECIFIER="" SYMROOT=$PWD/../build/ios > xcodebuild_log.txt 2>&1 || (tail -n 200 xcodebuild_log.txt && exit 1)
+          # Dùng lệnh chuẩn của Flutter để build (Không dùng xcodebuild thủ công gây hỏng framework)
+          flutter build ios --release --no-codesign
 
       - name: Package TIPA
         run: |
           mkdir -p Payload
-          cp -r build/ios/Release-iphoneos/Runner.app Payload/
+          # Copy bộ nguồn CHUẨN của Flutter
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          
+          # Để App không bị văng trên TrollStore, bắt buộc phải Ký Trắng (Ad-hoc Sign) toàn bộ Frameworks
+          find Payload/Runner.app/Frameworks -type d -name "*.framework" -exec codesign -s "-" -f {} \; || true
+          find Payload/Runner.app/Frameworks -type f -name "*.dylib" -exec codesign -s "-" -f {} \; || true
+          codesign -s "-" -f Payload/Runner.app/Runner || true
+          codesign -s "-" -f Payload/Runner.app || true
+          
           zip -r ModMenu-InApp.tipa Payload
 
       - name: Upload Artifact
