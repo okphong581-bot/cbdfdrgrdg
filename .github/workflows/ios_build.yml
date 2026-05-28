@@ -1,0 +1,166 @@
+name: Build TrollStore Menu IPA
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          
+      - name: Create Flutter Project & Inject Native Code
+        run: |
+          # 1. Create base flutter project
+          flutter create .
+          
+          # 2. Inject AppDelegate.swift with Floating Menu Code
+          cat << 'EOF' > ios/Runner/AppDelegate.swift
+          import UIKit
+          import Flutter
+          import AVFoundation
+
+          @UIApplicationMain
+          @objc class AppDelegate: FlutterAppDelegate {
+            
+            var floatingWindow: UIWindow?
+            var audioPlayer: AVAudioPlayer?
+
+            override func application(
+              _ application: UIApplication,
+              didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+            ) -> Bool {
+              GeneratedPluginRegistrant.register(with: self)
+              
+              // Giữ App chạy ngầm (Background) bằng Audio
+              do {
+                  try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                  try AVAudioSession.sharedInstance().setActive(true)
+              } catch {
+                  print("Lỗi AudioSession: \(error)")
+              }
+              
+              DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                  self.setupFloatingMenu()
+              }
+              
+              return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+            }
+            
+            func setupFloatingMenu() {
+                // UIWindowLevelStatusBar + 1000 để đè lên mọi thứ
+                let window = UIWindow(frame: CGRect(x: 50, y: 150, width: 250, height: 350))
+                window.windowLevel = UIWindow.Level.statusBar + 1000
+                window.backgroundColor = UIColor.black.withAlphaComponent(0.8)
+                window.layer.cornerRadius = 15
+                window.layer.masksToBounds = true
+                
+                let titleLabel = UILabel(frame: CGRect(x: 0, y: 10, width: 250, height: 30))
+                titleLabel.text = "TrollStore Mod Menu"
+                titleLabel.textColor = .green
+                titleLabel.textAlignment = .center
+                titleLabel.font = UIFont.boldSystemFont(ofSize: 18)
+                window.addSubview(titleLabel)
+                
+                let closeButton = UIButton(frame: CGRect(x: 210, y: 10, width: 30, height: 30))
+                closeButton.setTitle("X", for: .normal)
+                closeButton.setTitleColor(.red, for: .normal)
+                closeButton.addTarget(self, action: #selector(hideMenu), for: .touchUpInside)
+                window.addSubview(closeButton)
+                
+                let label = UILabel(frame: CGRect(x: 10, y: 60, width: 230, height: 200))
+                label.text = "Menu nổi này hoạt động nhờ đặc quyền Root của TrollStore.\n\nSếp có thể thoát ra màn hình chính, nó vẫn sẽ nổi lên trên mọi App khác!"
+                label.textColor = .white
+                label.numberOfLines = 0
+                label.textAlignment = .center
+                label.font = UIFont.systemFont(ofSize: 14)
+                window.addSubview(label)
+                
+                let panGesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+                window.addGestureRecognizer(panGesture)
+                
+                window.makeKeyAndVisible()
+                self.floatingWindow = window
+            }
+            
+            @objc func hideMenu() {
+                self.floatingWindow?.isHidden = true
+            }
+            
+            @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+                guard let window = self.floatingWindow else { return }
+                let translation = gesture.translation(in: window)
+                window.center = CGPoint(x: window.center.x + translation.x, y: window.center.y + translation.y)
+                gesture.setTranslation(.zero, in: window)
+            }
+          }
+          EOF
+          
+          # 3. Add UIBackgroundModes to Info.plist to keep app alive when exiting
+          cd ios/Runner
+          plutil -insert UIBackgroundModes -array Info.plist
+          plutil -insert UIBackgroundModes.0 -string "audio" Info.plist
+          cd ../..
+          
+      - name: Create TrollStore Entitlements
+        run: |
+          cat << 'EOF' > entitlements.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.private.security.no-sandbox</key>
+              <true/>
+              <key>com.apple.springboard.accessibility-window-hosting</key>
+              <true/>
+              <key>run-unsigned-code</key>
+              <true/>
+              <key>get-task-allow</key>
+              <true/>
+              <key>task_for_pid-allow</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Build iOS App (No Codesign)
+        run: |
+          cd ios
+          # Disable codesign in Xcode
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' Runner.xcodeproj/project.pbxproj || true
+          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' Runner.xcodeproj/project.pbxproj || true
+          
+          flutter build ios --release --no-codesign || true
+          
+          # Force build with Xcode directly to get the .app output
+          xcodebuild build -workspace Runner.xcworkspace -scheme Runner -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" EXPANDED_CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE_SPECIFIER="" SYMROOT=$PWD/../build/ios > xcodebuild_log.txt 2>&1 || (tail -n 200 xcodebuild_log.txt && exit 1)
+
+      - name: Inject Entitlements & Package TIPA
+        run: |
+          # Install ldid to inject entitlements
+          brew install ldid
+          
+          mkdir Payload
+          # Copy the compiled .app
+          cp -r build/ios/Release-iphoneos/Runner.app Payload/
+          
+          # Inject TrollStore Entitlements into the binary
+          ldid -Sentitlements.plist Payload/Runner.app/Runner
+          
+          # Zip into .tipa format
+          zip -r TrollMenu.tipa Payload
+
+      - name: Upload TIPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TrollMenu-TrollStore
+          path: TrollMenu.tipa
