@@ -1,4 +1,4 @@
-name: Build Pure Native TrollStore Menu
+name: Build TrollStore Menu IPA
 
 on:
   push:
@@ -13,168 +13,161 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         
-      - name: Install Dependencies
-        run: brew install xcodegen ldid
-        
-      - name: Setup Pure Native iOS Project
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          
+      - name: Create Flutter Project & Inject Native Code
         run: |
-          # 1. Create project.yml for XcodeGen
-          cat << 'EOF' > project.yml
-          name: ModMenu
-          options:
-            bundleIdPrefix: com.okphong
-          targets:
-            ModMenu:
-              type: application
-              platform: iOS
-              deploymentTarget: "14.0"
-              sources: [Sources]
-              info:
-                path: Info.plist
-              settings:
-                CODE_SIGNING_ALLOWED: NO
-                CODE_SIGNING_REQUIRED: NO
-                CODE_SIGN_IDENTITY: ""
-                EXPANDED_CODE_SIGN_IDENTITY: ""
-                PROVISIONING_PROFILE_SPECIFIER: ""
+          # 1. Create base flutter project
+          flutter create .
+          
+          # 1.5 Inject Flutter UI (main.dart)
+          cat << 'EOF' > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+
+          void main() {
+            runApp(const MyApp());
+          }
+
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'VIP Hack',
+                theme: ThemeData.dark(),
+                home: const HomeScreen(),
+              );
+            }
+          }
+
+          class HomeScreen extends StatelessWidget {
+            const HomeScreen({super.key});
+            static const platform = MethodChannel('com.mod.menu/hack');
+
+            Future<void> _startHack() async {
+              try {
+                await platform.invokeMethod('showMenu');
+              } catch (e) {
+                print(e);
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                backgroundColor: Colors.black,
+                appBar: AppBar(
+                  title: const Text('TrollStore VIP Mod', style: TextStyle(color: Colors.green)),
+                  backgroundColor: Colors.black,
+                  centerTitle: true,
+                ),
+                body: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.security, size: 100, color: Colors.green),
+                      const SizedBox(height: 30),
+                      ElevatedButton(
+                        onPressed: _startHack,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                        ),
+                        child: const Text('BẬT MENU NỔI', style: TextStyle(fontSize: 22, color: Colors.black, fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text('Bấm nút trên để cấp quyền Root\nvà hiển thị Menu Nổi.', textAlign: TextAlign.center, style: TextStyle(color: Colors.white70)),
+                    ],
+                  ),
+                ),
+              );
+            }
+          }
           EOF
-          
-          # 2. Create Info.plist (Bắt buộc phải có để build Native App)
-          cat << 'EOF' > Info.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>$(EXECUTABLE_NAME)</string>
-              <key>CFBundleIdentifier</key>
-              <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-              <key>CFBundleName</key>
-              <string>ModMenu</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>CFBundleVersion</key>
-              <string>1</string>
-              <key>LSRequiresIPhoneOS</key>
-              <true/>
-              <key>UILaunchStoryboardName</key>
-              <string>LaunchScreen</string>
-              <key>UIRequiredDeviceCapabilities</key>
-              <array>
-                  <string>armv7</string>
-              </array>
-              <key>UISupportedInterfaceOrientations</key>
-              <array>
-                  <string>UIInterfaceOrientationPortrait</string>
-              </array>
-          </dict>
-          </plist>
-          EOF
-          
-          # 3. Create Source Directory
-          mkdir -p Sources
-          
-          # 4. Create AppDelegate.swift
-          cat << 'EOF' > Sources/AppDelegate.swift
+
+          # 2. Inject AppDelegate.swift with MethodChannel
+          cat << 'EOF' > ios/Runner/AppDelegate.swift
           import UIKit
+          import Flutter
 
           @UIApplicationMain
-          class AppDelegate: UIResponder, UIApplicationDelegate {
-              var window: UIWindow?
-              var overlayWindow: UIWindow?
+          @objc class AppDelegate: FlutterAppDelegate {
+            
+            var overlayWindow: UIWindow?
 
-              func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-                  window = UIWindow(frame: UIScreen.main.bounds)
-                  let vc = ViewController()
-                  window?.rootViewController = vc
-                  window?.makeKeyAndVisible()
-                  return true
-              }
+            override func application(
+              _ application: UIApplication,
+              didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+            ) -> Bool {
+              GeneratedPluginRegistrant.register(with: self)
+              
+              // Thiết lập cầu nối (MethodChannel) để nhận lệnh từ nút bấm Flutter
+              let controller : FlutterViewController = window?.rootViewController as! FlutterViewController
+              let hackChannel = FlutterMethodChannel(name: "com.mod.menu/hack", binaryMessenger: controller.binaryMessenger)
+              
+              hackChannel.setMethodCallHandler({
+                (call: FlutterMethodCall, result: @escaping FlutterResult) -> Void in
+                if call.method == "showMenu" {
+                    self.setupFloatingMenu()
+                    result("Success")
+                } else {
+                    result(FlutterMethodNotImplemented)
+                }
+              })
+              
+              return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+            }
+            
+            func setupFloatingMenu() {
+                // Chỉ tạo Menu khi có lệnh từ người dùng
+                DispatchQueue.main.async {
+                    if self.overlayWindow != nil { return } // Tránh tạo nhiều lần
+                    
+                    let overlay = UIWindow(frame: CGRect(x: 20, y: 150, width: 60, height: 60))
+                    overlay.windowLevel = UIWindow.Level.statusBar + 1000
+                    overlay.backgroundColor = .clear
+                    
+                    let vc = UIViewController()
+                    vc.view.backgroundColor = .clear
+                    overlay.rootViewController = vc
+                    
+                    // Nút bấm tròn giả lập
+                    let btn = UIButton(frame: CGRect(x: 0, y: 0, width: 60, height: 60))
+                    btn.backgroundColor = .green
+                    btn.layer.cornerRadius = 30
+                    btn.layer.borderWidth = 2
+                    btn.layer.borderColor = UIColor.white.cgColor
+                    btn.setTitle("", for: .normal)
+                    btn.setTitleColor(.black, for: .normal)
+                    btn.titleLabel?.font = UIFont.boldSystemFont(ofSize: 30)
+                    
+                    let pan = UIPanGestureRecognizer(target: self, action: #selector(self.panGesture(_:)))
+                    btn.addGestureRecognizer(pan)
+                    
+                    vc.view.addSubview(btn)
+                    
+                    // Hiển thị Window đè hệ thống
+                    overlay.makeKeyAndVisible()
+                    self.overlayWindow = overlay
+                }
+            }
+            
+            @objc func panGesture(_ gesture: UIPanGestureRecognizer) {
+                guard let window = self.overlayWindow else { return }
+                let translation = gesture.translation(in: nil)
+                window.center = CGPoint(x: window.center.x + translation.x, y: window.center.y + translation.y)
+                gesture.setTranslation(.zero, in: nil)
+            }
           }
           EOF
           
-          # 4. Create ViewController.swift
-          cat << 'EOF' > Sources/ViewController.swift
-          import UIKit
-
-          class ViewController: UIViewController {
-              
-              override func viewDidLoad() {
-                  super.viewDidLoad()
-                  view.backgroundColor = .black
-                  
-                  let label = UILabel(frame: CGRect(x: 20, y: 100, width: UIScreen.main.bounds.width - 40, height: 100))
-                  label.text = "TrollStore Mod Menu\n(Pure Native iOS)"
-                  label.textColor = .green
-                  label.numberOfLines = 0
-                  label.font = UIFont.boldSystemFont(ofSize: 24)
-                  label.textAlignment = .center
-                  view.addSubview(label)
-                  
-                  let btn = UIButton(frame: CGRect(x: 50, y: 300, width: UIScreen.main.bounds.width - 100, height: 60))
-                  btn.backgroundColor = .green
-                  btn.setTitle("BẬT MENU NỔI", for: .normal)
-                  btn.setTitleColor(.black, for: .normal)
-                  btn.titleLabel?.font = UIFont.boldSystemFont(ofSize: 20)
-                  btn.layer.cornerRadius = 15
-                  btn.addTarget(self, action: #selector(showMenu), for: .touchUpInside)
-                  view.addSubview(btn)
-              }
-              
-              @objc func showMenu() {
-                  let appDelegate = UIApplication.shared.delegate as! AppDelegate
-                  
-                  if appDelegate.overlayWindow != nil { return }
-                  
-                  var overlay: UIWindow
-                  if #available(iOS 13.0, *), let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene {
-                      overlay = UIWindow(windowScene: windowScene)
-                  } else {
-                      overlay = UIWindow(frame: UIScreen.main.bounds)
-                  }
-                  
-                  overlay.frame = CGRect(x: 20, y: 150, width: 60, height: 60)
-                  overlay.windowLevel = UIWindow.Level.statusBar + 1000
-                  overlay.backgroundColor = .clear
-                  
-                  let vc = UIViewController()
-                  vc.view.backgroundColor = .clear
-                  overlay.rootViewController = vc
-                  
-                  let btn = UIButton(frame: CGRect(x: 0, y: 0, width: 60, height: 60))
-                  btn.backgroundColor = .green
-                  btn.layer.cornerRadius = 30
-                  btn.layer.borderWidth = 2
-                  btn.layer.borderColor = UIColor.white.cgColor
-                  btn.setTitle("", for: .normal)
-                  btn.setTitleColor(.black, for: .normal)
-                  btn.titleLabel?.font = UIFont.boldSystemFont(ofSize: 30)
-                  
-                  let pan = UIPanGestureRecognizer(target: self, action: #selector(panGesture(_:)))
-                  btn.addGestureRecognizer(pan)
-                  
-                  vc.view.addSubview(btn)
-                  overlay.makeKeyAndVisible()
-                  appDelegate.overlayWindow = overlay
-                  
-                  let alert = UIAlertController(title: "Thành Công", message: "Đã bật Menu Nổi TrollStore!", preferredStyle: .alert)
-                  alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
-                  self.present(alert, animated: true, completion: nil)
-              }
-              
-              @objc func panGesture(_ gesture: UIPanGestureRecognizer) {
-                  let appDelegate = UIApplication.shared.delegate as! AppDelegate
-                  guard let window = appDelegate.overlayWindow else { return }
-                  let translation = gesture.translation(in: nil)
-                  window.center = CGPoint(x: window.center.x + translation.x, y: window.center.y + translation.y)
-                  gesture.setTranslation(.zero, in: nil)
-              }
-          }
-          EOF
-
-          # 5. Create Entitlements
+      - name: Create TrollStore Entitlements
+        run: |
           cat << 'EOF' > entitlements.plist
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -190,20 +183,35 @@ jobs:
           </plist>
           EOF
 
-      - name: Generate Xcode Project
-        run: xcodegen generate
-        
-      - name: Build Pure Native App
+      - name: Build iOS App (No Codesign)
         run: |
-          xcodebuild build -project ModMenu.xcodeproj -scheme ModMenu -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" EXPANDED_CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE_SPECIFIER="" SYMROOT=$PWD/build > xcodebuild_log.txt 2>&1 || (tail -n 200 xcodebuild_log.txt && exit 1)
+          cd ios
+          # Disable codesign in Xcode
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' Runner.xcodeproj/project.pbxproj || true
+          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' Runner.xcodeproj/project.pbxproj || true
+          
+          flutter build ios --release --no-codesign || true
+          
+          # Force build with Xcode directly to get the .app output
+          xcodebuild build -workspace Runner.xcworkspace -scheme Runner -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" EXPANDED_CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE_SPECIFIER="" SYMROOT=$PWD/../build/ios > xcodebuild_log.txt 2>&1 || (tail -n 200 xcodebuild_log.txt && exit 1)
 
       - name: Inject Entitlements & Package TIPA
         run: |
           mkdir -p Payload
-          cp -r build/Release-iphoneos/ModMenu.app Payload/
+          # Copy the compiled .app
+          cp -r build/ios/Release-iphoneos/Runner.app Payload/
           
-          # Sign using TrollStore's official ldid
-          ldid -Sentitlements.plist Payload/ModMenu.app/ModMenu
+          # QUAN TRỌNG: Lỗi văng cũ là do tiêm Entitlements vào cả Frameworks (Flutter.framework).
+          # Cách giải quyết đúng: 
+          # 1. Ký các Framework bằng chữ ký trắng (Không Entitlements)
+          find Payload/Runner.app/Frameworks -type d -name "*.framework" -exec codesign -s "-" -f {} \; || true
+          find Payload/Runner.app/Frameworks -type f -name "*.dylib" -exec codesign -s "-" -f {} \; || true
+          
+          # 2. Tiêm Entitlements DUY NHẤT vào file thực thi chính của App
+          codesign -s "-" -f --entitlements entitlements.plist Payload/Runner.app/Runner
+          
+          # 3. Ký đè lại thư mục App một lần nữa (Không ép Entitlements xuống framework)
+          codesign -s "-" -f Payload/Runner.app
           
           zip -r ModMenu.tipa Payload
 
@@ -211,4 +219,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ModMenu-TrollStore
-          path: ModMenu.tipa
+          path: ModMenu.tipa      path: ModMenu.tipa
