@@ -34,7 +34,10 @@ jobs:
             
             var floatingButtonWindow: UIWindow?
             var fullMenuWindow: UIWindow?
-            var audioPlayer: AVAudioPlayer?
+            
+            // Audio Engine để giữ App sống mãi mãi khi thoát ra Home
+            let engine = AVAudioEngine()
+            let playerNode = AVAudioPlayerNode()
 
             override func application(
               _ application: UIApplication,
@@ -42,19 +45,37 @@ jobs:
             ) -> Bool {
               GeneratedPluginRegistrant.register(with: self)
               
-              // Giữ App chạy ngầm (Background) bằng Audio
-              do {
-                  try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
-                  try AVAudioSession.sharedInstance().setActive(true)
-              } catch {
-                  print("Lỗi AudioSession: \(error)")
-              }
+              keepAppAliveInBackground()
               
               DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                   self.setupFloatingMenu()
               }
               
               return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+            }
+            
+            func keepAppAliveInBackground() {
+                do {
+                    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                    try AVAudioSession.sharedInstance().setActive(true)
+                } catch {
+                    print("Lỗi AudioSession: \(error)")
+                }
+                
+                guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100.0, channels: 1),
+                      let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 100) else { return }
+                buffer.frameLength = 100
+                
+                engine.attach(playerNode)
+                engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+                
+                do {
+                    try engine.start()
+                    playerNode.scheduleBuffer(buffer, at: nil, options: .loops, completionHandler: nil)
+                    playerNode.play()
+                } catch {
+                    print("Lỗi khởi động Engine: \(error)")
+                }
             }
             
             func setupFloatingMenu() {
@@ -160,17 +181,17 @@ jobs:
             }
             
             @objc func handleBtnPan(_ gesture: UIPanGestureRecognizer) {
-                guard let window = self.floatingButtonWindow else { return }
-                let translation = gesture.translation(in: nil)
+                guard let window = self.floatingButtonWindow, let view = window.rootViewController?.view else { return }
+                let translation = gesture.translation(in: view)
                 window.center = CGPoint(x: window.center.x + translation.x, y: window.center.y + translation.y)
-                gesture.setTranslation(.zero, in: nil)
+                gesture.setTranslation(.zero, in: view)
             }
             
             @objc func handleMenuPan(_ gesture: UIPanGestureRecognizer) {
-                guard let window = self.fullMenuWindow else { return }
-                let translation = gesture.translation(in: nil)
+                guard let window = self.fullMenuWindow, let view = window.rootViewController?.view else { return }
+                let translation = gesture.translation(in: view)
                 window.center = CGPoint(x: window.center.x + translation.x, y: window.center.y + translation.y)
-                gesture.setTranslation(.zero, in: nil)
+                gesture.setTranslation(.zero, in: view)
             }
           }
           EOF
